@@ -1,0 +1,696 @@
+// استيراد المكتبات الأساسية اللازمة لتشغيل البوت
+const Discord = require('discord.js'); // مكتبة ديسكورد الرئيسية
+const client = new Discord.Client({ // إنشاء عميل جديد للبوت
+    intents: [ // تحديد النوايا (Intents) للوصول إلى الميزات
+        Discord.GatewayIntentBits.Guilds,           // الوصول إلى السيرفرات
+        Discord.GatewayIntentBits.GuildMessages,    // قراءة الرسائل
+        Discord.GatewayIntentBits.MessageContent,   // الوصول إلى محتوى الرسائل
+        Discord.GatewayIntentBits.GuildMembers,     // إدارة الأعضاء
+        Discord.GatewayIntentBits.GuildPresences,   // تتبع حالة الأعضاء
+        Discord.GatewayIntentBits.GuildVoiceStates, // إدارة القنوات الصوتية
+        Discord.GatewayIntentBits.GuildMessageReactions // التعامل مع التفاعلات
+    ]
+});
+
+// إعدادات أساسية للبوت
+const prefix = '!'; // البادئة لتشغيل الأوامر
+const fs = require('fs'); // مكتبة نظام الملفات
+const config = require('./config.json'); // ملف الإعدادات (يحتوي على التوكن)
+const { QuickDB } = require('quick.db'); // مكتبة قاعدة بيانات بسيطة
+const db = new QuickDB(); // تهيئة قاعدة البيانات
+
+// إعدادات التخزين لمختلف الأنظمة
+client.commands = new Discord.Collection(); // مجموعة لتخزين الأوامر
+client.cooldowns = new Discord.Collection(); // تتبع فترات التهدئة
+client.tickets = new Map(); // تتبع تذاكر الدعم
+client.economy = new Map(); // تخزين بيانات الاقتصاد
+client.autoResponses = new Map(); // تخزين الردود التلقائية
+client.reputation = new Map(); // تخزين نقاط السمعة
+client.stats = new Map(); // تخزين إحصائيات المستخدمين
+
+// تحميل الأوامر من مجلد "commands"
+const commandFiles = fs.readdirSync('./commands').filter(file => file.endsWith('.js')); // قراءة ملفات الأوامر
+for (const file of commandFiles) { // تكرار على كل ملف
+    const command = require(`./commands/${file}`); // تحميل الملف
+    client.commands.set(command.name, command); // إضافة الأمر إلى المجموعة
+    console.log(`تم تحميل الأمر: ${command.name}`); // تسجيل تحميل الأمر
+}
+
+// عندما يكون البوت جاهزًا للعمل
+client.once('ready', () => { // حدث يتم تشغيله مرة واحدة عند الاستعداد
+    console.log(`البوت جاهز! تم تسجيل الدخول كـ ${client.user.tag}`); // تأكيد التشغيل
+    client.user.setActivity('!help | مراقبة السيرفر', { type: 'PLAYING' }); // تعيين الحالة الأولية
+
+    // تحديث حالة البوت بشكل ديناميكي
+    setInterval(() => { // تكرار كل 30 ثانية
+        const statuses = [ // قائمة الحالات الممكنة
+            `يراقب ${client.guilds.cache.size} سيرفر`, // عرض عدد السيرفرات
+            `يخدم ${client.users.cache.size} مستخدم`, // عرض عدد المستخدمين
+            'استخدم !help للمساعدة', // تعليمات للمستخدم
+            'تم تطويري بواسطة xAI', // إشارة للمطور
+            `الوقت الحالي: ${new Date().toLocaleTimeString()}` // عرض الوقت
+        ];
+        const randomStatus = statuses[Math.floor(Math.random() * statuses.length)]; // اختيار حالة عشوائية
+        client.user.setActivity(randomStatus, { type: 'WATCHING' }); // تحديث الحالة
+    }, 30000); // المدة بالميلي ثانية
+});
+
+// الترحيب بالأعضاء الجدد
+client.on('guildMemberAdd', async member => { // حدث انضمام عضو جديد
+    const welcomeChannel = member.guild.channels.cache.find(ch => ch.name === 'welcome'); // البحث عن قناة الترحيب
+    if (!welcomeChannel) return; // التوقف إذا لم توجد القناة
+
+    // إعداد رسالة ترحيب مخصصة
+    const welcomeEmbed = new Discord.EmbedBuilder() // إنشاء Embed جديد
+        .setColor('#00ff00') // تعيين اللون الأخضر
+        .setTitle('🎉 مرحبًا بك في السيرفر!') // تعيين العنوان
+        .setDescription(`أهلاً ${member} في **${member.guild.name}**!\nأنت العضو رقم **${member.guild.memberCount}**`) // الوصف
+        .setThumbnail(member.user.displayAvatarURL()) // صورة المستخدم
+        .addFields( // إضافة حقول
+            { name: '📜 القوانين', value: 'يرجى قراءة قناة #rules', inline: true }, // حقل القوانين
+            { name: '👋 قل مرحبًا', value: 'توجه إلى #general', inline: true }, // حقل الدردشة
+            { name: 'ℹ️ معلومات', value: 'استخدم !help للمساعدة', inline: true } // حقل المساعدة
+        )
+        .setFooter({ text: 'نتمنى لك إقامة ممتعة!' }) // تذييل الرسالة
+        .setTimestamp(); // إضافة الوقت الحالي
+
+    await welcomeChannel.send({ embeds: [welcomeEmbed] }); // إرسال الرسالة
+
+    // إضافة رتبة تلقائية
+    const role = member.guild.roles.cache.find(r => r.name === 'عضو جديد'); // البحث عن الرتبة
+    if (role) { // إذا وجدت الرتبة
+        try {
+            await member.roles.add(role); // إضافة الرتبة للعضو
+            console.log(`تم إعطاء رتبة "عضو جديد" لـ ${member.user.tag}`); // تسجيل العملية
+        } catch (error) { // معالجة الأخطاء
+            console.error(`فشل في إعطاء الرتبة: ${error}`); // تسجيل الخطأ
+        }
+    }
+
+    // تهيئة بيانات المستخدم في قاعدة البيانات
+    await db.set(`xp_${member.id}_${member.guild.id}`, 0); // تهيئة XP
+    await db.set(`level_${member.id}_${member.guild.id}`, 0); // تهيئة المستوى
+    await db.set(`economy_${member.id}`, 0); // تهيئة الرصيد
+    await db.set(`reputation_${member.id}`, 0); // تهيئة السمعة
+});
+
+// تسجيل مغادرة الأعضاء
+client.on('guildMemberRemove', async member => { // حدث مغادرة عضو
+    const logChannel = member.guild.channels.cache.find(ch => ch.name === 'logs'); // البحث عن قناة السجلات
+    if (!logChannel) return; // التوقف إذا لم توجد القناة
+
+    const leaveEmbed = new Discord.EmbedBuilder() // إنشاء Embed جديد
+        .setColor('#ff0000') // تعيين اللون الأحمر
+        .setTitle('🚪 عضو غادر السيرفر') // العنوان
+        .setDescription(`وداعًا ${member.user.tag}\nكان معنا لمدة: ${Math.round((Date.now() - member.joinedTimestamp) / 86400000)} يوم`) // الوصف
+        .addFields( // إضافة حقول
+            { name: '🕒 تاريخ الانضمام', value: new Date(member.joinedTimestamp).toLocaleString(), inline: true }, // تاريخ الانضمام
+            { name: '📊 عدد الأعضاء الآن', value: `${member.guild.memberCount}`, inline: true } // عدد الأعضاء الحالي
+        )
+        .setTimestamp(); // الوقت الحالي
+
+    await logChannel.send({ embeds: [leaveEmbed] }); // إرسال الرسالة
+});
+
+// معالجة الرسائل وتنفيذ الأوامر
+client.on('messageCreate', async message => { // حدث إرسال رسالة
+    // تجاهل الرسائل من البوتات أو بدون البادئة
+    if (message.author.bot) return; // التوقف إذا كان البوت هو المرسل
+
+    // تحديث إحصائيات المستخدم
+    const stats = client.stats.get(message.author.id) || { messages: 0, commands: 0 }; // جلب الإحصائيات
+    stats.messages++; // زيادة عدد الرسائل
+    client.stats.set(message.author.id, stats); // حفظ الإحصائيات
+
+    // نظام المستويات
+    const xpToAdd = Math.floor(Math.random() * 15) + 5; // XP عشوائي بين 5 و20
+    const userXP = await db.get(`xp_${message.author.id}_${message.guild.id}`) || 0; // جلب XP الحالي
+    const newXP = userXP + xpToAdd; // إضافة XP جديد
+    await db.set(`xp_${message.author.id}_${message.guild.id}`, newXP); // حفظ XP
+
+    const level = Math.floor(newXP / 100); // حساب المستوى
+    const currentLevel = await db.get(`level_${message.author.id}_${message.guild.id}`) || 0; // جلب المستوى الحالي
+    if (level > currentLevel) { // إذا ارتفع المستوى
+        await db.set(`level_${message.author.id}_${message.guild.id}`, level); // حفظ المستوى الجديد
+        message.channel.send(`${message.author} 🎉 لقد وصلت إلى المستوى ${level}!`); // تهنئة المستخدم
+    }
+
+    // التحقق من الردود التلقائية
+    client.autoResponses.forEach((response, trigger) => { // تكرار على الردود التلقائية
+        if (message.content.toLowerCase().includes(trigger)) { // إذا احتوت الرسالة على المحفز
+            message.reply(response); // الرد بالرسالة المحددة
+        }
+    });
+
+    if (!message.content.startsWith(prefix)) return; // التوقف إذا لم يبدأ بالبادئة
+
+    // تقسيم الرسالة إلى أمر ومعاملات
+    const args = message.content.slice(prefix.length).trim().split(/ +/); // تقسيم النص
+    const commandName = args.shift().toLowerCase(); // استخراج اسم الأمر
+
+    // تحديث إحصائيات الأوامر
+    stats.commands++; // زيادة عدد الأوامر المستخدمة
+    client.stats.set(message.author.id, stats); // حفظ الإحصائيات
+
+    // البحث عن الأمر
+    const command = client.commands.get(commandName) || 
+                   client.commands.find(cmd => cmd.aliases && cmd.aliases.includes(commandName)); // البحث في الأوامر أو الأسماء المستعارة
+
+    if (!command) return message.reply('❌ هذا الأمر غير موجود! استخدم !help'); // رد إذا لم يوجد الأمر
+
+    // التحقق من الأذونات
+    if (command.permissions) { // إذا كان الأمر يتطلب أذونات
+        const authorPerms = message.channel.permissionsFor(message.author); // جلب أذونات المستخدم
+        if (!authorPerms || !authorPerms.has(command.permissions)) { // إذا لم يكن لديه الأذونات
+            return message.reply('⛔ ليس لديك الصلاحيات الكافية لهذا الأمر!'); // إخبار المستخدم
+        }
+    }
+
+    // نظام التهدئة (Cooldown)
+    if (!client.cooldowns.has(command.name)) { // إذا لم يكن هناك تهدئة مسجلة للأمر
+        client.cooldowns.set(command.name, new Discord.Collection()); // إنشاء مجموعة تهدئة جديدة
+    }
+
+    const now = Date.now(); // الوقت الحالي
+    const timestamps = client.cooldowns.get(command.name); // جلب أوقات الاستخدام
+    const cooldownAmount = (command.cooldown || 3) * 1000; // مدة التهدئة (افتراضي 3 ثوانٍ)
+
+    if (timestamps.has(message.author.id)) { // إذا كان المستخدم لديه تهدئة
+        const expirationTime = timestamps.get(message.author.id) + cooldownAmount; // وقت انتهاء التهدئة
+        if (now < expirationTime) { // إذا لم تنته التهدئة
+            const timeLeft = (expirationTime - now) / 1000; // حساب الوقت المتبقي
+            return message.reply(`⏳ يرجى الانتظار ${timeLeft.toFixed(1)} ثانية قبل إعادة استخدام \`${command.name}\``); // إخبار المستخدم
+        }
+    }
+
+    timestamps.set(message.author.id, now); // تسجيل وقت الاستخدام الحالي
+    setTimeout(() => timestamps.delete(message.author.id), cooldownAmount); // حذف التهدئة بعد انتهائها
+
+    // تنفيذ الأمر
+    try {
+        await command.execute(message, args, client, db); // تشغيل الأمر مع تمرير المعطيات
+    } catch (error) { // معالجة الأخطاء
+        console.error(`خطأ في تنفيذ الأمر ${command.name}: ${error}`); // تسجيل الخطأ
+        message.reply('⚠️ حدث خطأ أثناء تنفيذ الأمر!'); // إخبار المستخدم
+    }
+});
+
+// نظام مكافحة السبام
+const spamMap = new Map(); // خريطة لتتبع نشاط المستخدمين
+client.on('messageCreate', message => { // حدث إرسال رسالة
+    if (message.author.bot || message.member.permissions.has('ADMINISTRATOR')) return; // تجاهل البوتات والمشرفين
+
+    const now = Date.now(); // الوقت الحالي
+    const userData = spamMap.get(message.author.id) || { count: 0, lastMessage: 0, warned: false }; // بيانات المستخدم
+
+    if (now - userData.lastMessage < 3000) { // إذا كانت الرسائل متقاربة
+        userData.count++; // زيادة العداد
+        if (userData.count > 5 && !userData.warned) { // إذا تجاوز 5 رسائل بدون تحذير
+            message.channel.send(`${message.author}, ⚠️ توقف عن السبام!`); // تحذير المستخدم
+            userData.warned = true; // تسجيل التحذير
+        } else if (userData.count > 10) { // إذا تجاوز 10 رسائل
+            message.member.timeout(60 * 60 * 1000, 'سبام مفرط') // كتم لمدة ساعة
+                .then(() => message.channel.send(`${message.author} تم تهدئته لمدة ساعة بسبب السبام`)) // تأكيد الكتم
+                .catch(console.error); // تسجيل الخطأ
+            spamMap.delete(message.author.id); // حذف البيانات
+            return;
+        }
+    } else { // إذا كانت الرسالة بعد 3 ثوانٍ
+        userData.count = 1; // إعادة العداد
+        userData.warned = false; // إعادة تعيين التحذير
+    }
+
+    userData.lastMessage = now; // تحديث وقت آخر رسالة
+    spamMap.set(message.author.id, userData); // حفظ البيانات
+});
+
+// نظام التذاكر
+client.on('messageCreate', async message => { // حدث إرسال رسالة
+    if (message.content === '!ticket') { // عند كتابة !ticket
+        const ticketChannel = await message.guild.channels.create({ // إنشاء قناة جديدة
+            name: `ticket-${message.author.username}`, // اسم القناة
+            type: Discord.ChannelType.GuildText, // نوع القناة نصي
+            permissionOverwrites: [ // إعداد الأذونات
+                { id: message.guild.id, deny: [Discord.PermissionsBitField.Flags.ViewChannel] }, // منع الجميع
+                { id: message.author.id, allow: [Discord.PermissionsBitField.Flags.ViewChannel, Discord.PermissionsBitField.Flags.SendMessages] }, // السماح لصاحب التذكرة
+                { id: client.user.id, allow: [Discord.PermissionsBitField.Flags.ViewChannel, Discord.PermissionsBitField.Flags.SendMessages] } // السماح للبوت
+            ]
+        });
+
+        const ticketEmbed = new Discord.EmbedBuilder() // إنشاء Embed
+            .setColor('#ffaa00') // لون برتقالي
+            .setTitle('🎫 تذكرة دعم جديدة') // العنوان
+            .setDescription(`مرحبًا ${message.author}، أخبرنا بمشكلتك وسيساعدك فريق الدعم قريبًا\nاكتب !close لإغلاق التذكرة`) // الوصف
+            .addFields( // إضافة حقول
+                { name: '📌 ملاحظة', value: 'كن واضحًا في وصف مشكلتك', inline: true }, // نصيحة
+                { name: '⏳ الانتظار', value: 'سيتم الرد عليك قريبًا', inline: true } // توقع الرد
+            )
+            .setTimestamp(); // الوقت
+
+        await ticketChannel.send({ embeds: [ticketEmbed] }); // إرسال الرسالة
+        client.tickets.set(ticketChannel.id, message.author.id); // تسجيل التذكرة
+        message.reply(`✅ تم إنشاء تذكرتك: ${ticketChannel}`); // تأكيد للمستخدم
+    }
+
+    if (message.content === '!close' && client.tickets.has(message.channel.id)) { // عند كتابة !close
+        await message.channel.send('🔒 سيتم إغلاق التذكرة خلال 5 ثوانٍ...'); // إشعار الإغلاق
+        setTimeout(() => { // تأخير 5 ثوانٍ
+            message.channel.delete().catch(console.error); // حذف القناة
+            client.tickets.delete(message.channel.id); // حذف التذكرة من السجل
+        }, 5000);
+    }
+});
+// أوامر إدارية
+client.commands.set('ban', { // أمر الحظر
+    name: 'ban', // اسم الأمر
+    description: 'حظر عضو من السيرفر', // الوصف
+    permissions: ['BAN_MEMBERS'], // الصلاحية المطلوبة
+    async execute(message, args) { // دالة التنفيذ
+        const member = message.mentions.members.first(); // العضو المذكور
+        if (!member) return message.reply('❌ يرجى منشن العضو المراد حظره'); // التحقق من ذكر العضو
+        if (!member.bannable) return message.reply('⛔ لا يمكنني حظر هذا العضو!'); // التحقق من إمكانية الحظر
+
+        const reason = args.slice(1).join(' ') || 'غير محدد'; // استخراج السبب
+        await member.ban({ reason }); // تنفيذ الحظر
+        message.channel.send(`✅ ${member.user.tag} تم حظره\nالسبب: ${reason}`); // تأكيد الحظر
+    }
+});
+
+client.commands.set('kick', { // أمر الطرد
+    name: 'kick',
+    description: 'طرد عضو من السيرفر',
+    permissions: ['KICK_MEMBERS'],
+    async execute(message, args) {
+        const member = message.mentions.members.first();
+        if (!member) return message.reply('❌ يرجى منشن العضو المراد طرده');
+        if (!member.kickable) return message.reply('⛔ لا يمكنني طرد هذا العضو!');
+
+        const reason = args.slice(1).join(' ') || 'غير محدد';
+        await member.kick(reason);
+        message.channel.send(`✅ ${member.user.tag} تم طرده\nالسبب: ${reason}`);
+    }
+});
+
+client.commands.set('mute', { // أمر الكتم
+    name: 'mute',
+    description: 'كتم عضو لفترة محددة',
+    permissions: ['MODERATE_MEMBERS'],
+    async execute(message, args) {
+        const member = message.mentions.members.first();
+        if (!member) return message.reply('❌ يرجى منشن العضو المراد كتمه');
+        const time = parseInt(args[1]) || 60; // المدة بالدقائق (افتراضي 60)
+
+        await member.timeout(time * 60 * 1000, 'كتم بواسطة مشرف');
+        message.channel.send(`🔇 ${member.user.tag} تم كتمه لمدة ${time} دقيقة`);
+    }
+});
+
+client.commands.set('clear', { // أمر حذف الرسائل
+    name: 'clear',
+    description: 'حذف عدد محدد من الرسائل',
+    permissions: ['MANAGE_MESSAGES'],
+    async execute(message, args) {
+        const amount = parseInt(args[0]);
+        if (!amount || amount < 1 || amount > 100) return message.reply('❌ يرجى تحديد عدد بين 1 و100');
+
+        await message.channel.bulkDelete(amount, true);
+        message.channel.send(`🧹 تم حذف ${amount} رسالة`).then(msg => setTimeout(() => msg.delete(), 3000));
+    }
+});
+
+// نظام الاقتصاد المتقدم
+client.commands.set('balance', { // أمر عرض الرصيد
+    name: 'balance',
+    description: 'عرض رصيدك الحالي',
+    async execute(message, args, client, db) {
+        const balance = await db.get(`economy_${message.author.id}`) || 0; // جلب الرصيد
+        message.reply(`💰 رصيدك الحالي: ${balance} عملة`); // عرض الرصيد
+    }
+});
+
+client.commands.set('work', { // أمر العمل
+    name: 'work',
+    description: 'العمل لكسب العملات',
+    cooldown: 60, // تهدئة دقيقة
+    async execute(message, args, client, db) {
+        const earnings = Math.floor(Math.random() * 100) + 50; // أرباح عشوائية
+        const currentBalance = await db.get(`economy_${message.author.id}`) || 0; // الرصيد الحالي
+        await db.set(`economy_${message.author.id}`, currentBalance + earnings); // تحديث الرصيد
+        message.reply(`👷‍♂️ لقد عملت وكسبت ${earnings} عملة! رصيدك الآن: ${currentBalance + earnings}`); // تأكيد الأرباح
+    }
+});
+
+client.commands.set('shop', { // أمر عرض المتجر
+    name: 'shop',
+    description: 'عرض قائمة العناصر المتاحة للشراء',
+    execute(message) {
+        const shopEmbed = new Discord.EmbedBuilder()
+            .setColor('#ffcc00')
+            .setTitle('🏪 المتجر')
+            .addFields(
+                { name: '1. رتبة VIP', value: 'السعر: 1000 عملة\nاكتب !buy vip', inline: true },
+                { name: '2. لون مخصص', value: 'السعر: 500 عملة\nاكتب !buy color', inline: true },
+                { name: '3. شارة مميزة', value: 'السعر: 750 عملة\nاكتب !buy badge', inline: true },
+                { name: '4. قناة خاصة', value: 'السعر: 2000 عملة\nاكتب !buy channel', inline: true }
+            );
+        message.channel.send({ embeds: [shopEmbed] });
+    }
+});
+
+client.commands.set('buy', { // أمر الشراء
+    name: 'buy',
+    description: 'شراء عنصر من المتجر',
+    async execute(message, args, client, db) {
+        const item = args[0]?.toLowerCase(); // العنصر المطلوب
+        const balance = await db.get(`economy_${message.author.id}`) || 0; // جلب الرصيد
+
+        if (!item) return message.reply('❌ يرجى تحديد العنصر المراد شراؤه');
+
+        if (item === 'vip' && balance >= 1000) { // شراء رتبة VIP
+            await db.sub(`economy_${message.author.id}`, 1000);
+            const role = message.guild.roles.cache.find(r => r.name === 'VIP');
+            if (role) message.member.roles.add(role);
+            message.reply('🎉 تم شراء رتبة VIP بنجاح!');
+        } else if (item === 'color' && balance >= 500) { // شراء لون مخصص
+            await db.sub(`economy_${message.author.id}`, 500);
+            message.reply('🌈 تم شراء لون مخصص! تواصل مع المشرفين لاختياره');
+        } else if (item === 'badge' && balance >= 750) { // شراء شارة
+            await db.sub(`economy_${message.author.id}`, 750);
+            message.reply('🏅 تم شراء شارة مميزة! ستظهر في ملفك الشخصي');
+        } else if (item === 'channel' && balance >= 2000) { // شراء قناة خاصة
+            await db.sub(`economy_${message.author.id}`, 2000);
+            const channel = await message.guild.channels.create({
+                name: `${message.author.username}-private`,
+                type: Discord.ChannelType.GuildText,
+                permissionOverwrites: [
+                    { id: message.guild.id, deny: [Discord.PermissionsBitField.Flags.ViewChannel] },
+                    { id: message.author.id, allow: [Discord.PermissionsBitField.Flags.ViewChannel, Discord.PermissionsBitField.Flags.SendMessages] }
+                ]
+            });
+            message.reply(`📡 تم شراء قناة خاصة: ${channel}`);
+        } else {
+            message.reply('❌ إما أن العنصر غير موجود أو رصيدك غير كافٍ');
+        }
+    }
+});
+
+// نظام السمعة
+client.commands.set('rep', { // أمر إعطاء سمعة
+    name: 'rep',
+    description: 'إعطاء سمعة لعضو',
+    cooldown: 3600, // تهدئة ساعة
+    async execute(message, args, client, db) {
+        const member = message.mentions.members.first(); // العضو المذكور
+        if (!member) return message.reply('❌ يرجى منشن العضو لإعطائه سمعة');
+        if (member.id === message.author.id) return message.reply('⛔ لا يمكنك إعطاء نفسك سمعة!');
+
+        const rep = await db.get(`reputation_${member.id}`) || 0; // جلب السمعة الحالية
+        await db.set(`reputation_${member.id}`, rep + 1); // زيادة السمعة
+        message.reply(`👍 لقد أعطيت ${member.user.tag} نقطة سمعة! رصيده الآن: ${rep + 1}`); // تأكيد الإعطاء
+    }
+});
+
+client.commands.set('reputation', { // أمر عرض السمعة
+    name: 'reputation',
+    description: 'عرض سمعة عضو',
+    async execute(message, args, client, db) {
+        const member = message.mentions.members.first() || message.member; // العضو المذكور أو المرسل
+        const rep = await db.get(`reputation_${member.id}`) || 0; // جلب السمعة
+        message.reply(`🌟 سمعة ${member.user.tag}: ${rep} نقطة`); // عرض السمعة
+    }
+});
+
+// نظام الإحصائيات
+client.commands.set('stats', { // أمر عرض الإحصائيات
+    name: 'stats',
+    description: 'عرض إحصائياتك',
+    execute(message) {
+        const stats = client.stats.get(message.author.id) || { messages: 0, commands: 0 }; // جلب الإحصائيات
+        const statEmbed = new Discord.EmbedBuilder()
+            .setColor('#00aaff')
+            .setTitle(`📊 إحصائيات ${message.author.username}`)
+            .addFields(
+                { name: '📩 عدد الرسائل', value: `${stats.messages}`, inline: true },
+                { name: '🛠️ عدد الأوامر', value: `${stats.commands}`, inline: true },
+                { name: '⏰ تاريخ الانضمام', value: message.member.joinedAt.toLocaleString(), inline: true }
+            );
+        message.channel.send({ embeds: [statEmbed] });
+    }
+});
+
+// الردود التلقائية
+client.commands.set('addresponse', { // أمر إضافة رد تلقائي
+    name: 'addresponse',
+    description: 'إضافة رد تلقائي لكلمة معينة',
+    permissions: ['MANAGE_GUILD'],
+    execute(message, args) {
+        const trigger = args[0]; // الكلمة المحفزة
+        const response = args.slice(1).join(' '); // الرد
+        if (!trigger || !response) return message.reply('❌ يرجى تحديد الكلمة المحفزة والرد');
+
+        client.autoResponses.set(trigger.toLowerCase(), response); // إضافة الرد
+        message.reply(`✅ تم إضافة رد تلقائي: "${trigger}" -> "${response}"`);
+    }
+});
+
+client.commands.set('removeresponse', { // أمر حذف رد تلقائي
+    name: 'removeresponse',
+    description: 'حذف رد تلقائي',
+    permissions: ['MANAGE_GUILD'],
+    execute(message, args) {
+        const trigger = args[0]; // الكلمة المحفزة
+        if (!trigger) return message.reply('❌ يرجى تحديد الكلمة المحفزة');
+        if (!client.autoResponses.has(trigger.toLowerCase())) return message.reply('❌ هذا الرد غير موجود');
+
+        client.autoResponses.delete(trigger.toLowerCase()); // حذف الرد
+        message.reply(`✅ تم حذف الرد التلقائي لـ "${trigger}"`);
+    }
+});
+
+// إدارة القنوات والرتب
+client.commands.set('createchannel', { // أمر إنشاء قناة
+    name: 'createchannel',
+    description: 'إنشاء قناة نصية جديدة',
+    permissions: ['MANAGE_CHANNELS'],
+    async execute(message, args) {
+        const name = args.join('-') || 'new-channel'; // اسم القناة
+        await message.guild.channels.create({ name, type: Discord.ChannelType.GuildText });
+        message.reply(`✅ تم إنشاء قناة: ${name}`);
+    }
+});
+
+client.commands.set('addrole', { // أمر إضافة رتبة
+    name: 'addrole',
+    description: 'إضافة رتبة لعضو',
+    permissions: ['MANAGE_ROLES'],
+    async execute(message, args) {
+        const member = message.mentions.members.first();
+        const roleName = args.slice(1).join(' ');
+        const role = message.guild.roles.cache.find(r => r.name === roleName);
+        
+        if (!member || !role) return message.reply('❌ يرجى منشن العضو وتحديد الرتبة');
+        await member.roles.add(role);
+        message.reply(`✅ تم إضافة رتبة ${role.name} لـ ${member.user.tag}`);
+    }
+});
+
+client.commands.set('removerole', { // أمر إزالة رتبة
+    name: 'removerole',
+    description: 'إزالة رتبة من عضو',
+    permissions: ['MANAGE_ROLES'],
+    async execute(message, args) {
+        const member = message.mentions.members.first();
+        const roleName = args.slice(1).join(' ');
+        const role = message.guild.roles.cache.find(r => r.name === roleName);
+        
+        if (!member || !role) return message.reply('❌ يرجى منشن العضو وتحديد الرتبة');
+        await member.roles.remove(role);
+        message.reply(`✅ تم إزالة رتبة ${role.name} من ${member.user.tag}`);
+    }
+});
+// تسجيل الأحداث الموسع
+client.on('messageDelete', async message => { // حدث حذف رسالة
+    const logChannel = message.guild.channels.cache.find(ch => ch.name === 'logs');
+    if (!logChannel || !message.content) return;
+
+    const deleteEmbed = new Discord.EmbedBuilder()
+        .setColor('#ff5555')
+        .setTitle('🗑️ رسالة محذوفة')
+        .addFields(
+            { name: 'المرسل', value: `${message.author.tag}`, inline: true },
+            { name: 'القناة', value: `${message.channel.name}`, inline: true },
+            { name: 'المحتوى', value: message.content || 'غير متاح' },
+            { name: 'الوقت', value: new Date().toLocaleString(), inline: true }
+        )
+        .setTimestamp();
+    await logChannel.send({ embeds: [deleteEmbed] });
+});
+
+client.on('messageUpdate', async (oldMessage, newMessage) => { // حدث تعديل رسالة
+    const logChannel = newMessage.guild.channels.cache.find(ch => ch.name === 'logs');
+    if (!logChannel || oldMessage.content === newMessage.content) return;
+
+    const editEmbed = new Discord.EmbedBuilder()
+        .setColor('#ffff55')
+        .setTitle('✏️ رسالة معدلة')
+        .addFields(
+            { name: 'المرسل', value: `${newMessage.author.tag}`, inline: true },
+            { name: 'القناة', value: `${newMessage.channel.name}`, inline: true },
+            { name: 'قبل', value: oldMessage.content || 'غير متاح', inline: false },
+            { name: 'بعد', value: newMessage.content || 'غير متاح', inline: false }
+        )
+        .setTimestamp();
+    await logChannel.send({ embeds: [editEmbed] });
+});
+
+client.on('roleUpdate', async (oldRole, newRole) => { // حدث تحديث رتبة
+    const logChannel = newRole.guild.channels.cache.find(ch => ch.name === 'logs');
+    if (!logChannel) return;
+
+    const roleEmbed = new Discord.EmbedBuilder()
+        .setColor('#55ff55')
+        .setTitle('🔧 تحديث رتبة')
+        .addFields(
+            { name: 'الرتبة', value: newRole.name, inline: true },
+            { name: 'اللون القديم', value: `${oldRole.hexColor}`, inline: true },
+            { name: 'اللون الجديد', value: `${newRole.hexColor}`, inline: true }
+        )
+        .setTimestamp();
+    await logChannel.send({ embeds: [roleEmbed] });
+});
+
+client.on('channelCreate', async channel => { // حدث إنشاء قناة
+    const logChannel = channel.guild.channels.cache.find(ch => ch.name === 'logs');
+    if (!logChannel) return;
+
+    const channelEmbed = new Discord.EmbedBuilder()
+        .setColor('#00ffaa')
+        .setTitle('📡 قناة جديدة')
+        .addFields(
+            { name: 'اسم القناة', value: channel.name, inline: true },
+            { name: 'النوع', value: channel.type === Discord.ChannelType.GuildText ? 'نصية' : 'صوتية', inline: true }
+        )
+        .setTimestamp();
+    await logChannel.send({ embeds: [channelEmbed] });
+});
+
+// أوامر ترفيهية وألعاب
+client.commands.set('meme', { // أمر عرض ميم
+    name: 'meme',
+    description: 'عرض ميم عشوائي',
+    execute(message) {
+        const memes = [ // قائمة طويلة من الميمات
+            'https://i.imgur.com/abc123.jpg', 'https://i.imgur.com/def456.jpg',
+            'https://i.imgur.com/ghi789.jpg', 'https://i.imgur.com/jkl012.jpg',
+            'https://i.imgur.com/mno345.jpg', 'https://i.imgur.com/pqr678.jpg',
+            'https://i.imgur.com/stu901.jpg', 'https://i.imgur.com/vwx234.jpg',
+            'https://i.imgur.com/yz5678.jpg', 'https://i.imgur.com/abc901.jpg'
+        ];
+        const randomMeme = memes[Math.floor(Math.random() * memes.length)];
+        message.channel.send({ embeds: [new Discord.EmbedBuilder().setImage(randomMeme)] });
+    }
+});
+
+client.commands.set('rps', { // أمر لعبة حجرة ورقة مقص
+    name: 'rps',
+    description: 'لعبة حجرة ورقة مقص ضد البوت',
+    execute(message, args) {
+        const choices = ['حجرة', 'ورقة', 'مقص'];
+        const userChoice = args[0]?.toLowerCase();
+        if (!choices.includes(userChoice)) return message.reply('❌ اختر: حجرة، ورقة، أو مقص');
+
+        const botChoice = choices[Math.floor(Math.random() * 3)];
+        let result;
+
+        if (userChoice === botChoice) result = 'تعادل!';
+        else if (
+            (userChoice === 'حجرة' && botChoice === 'مقص') ||
+            (userChoice === 'ورقة' && botChoice === 'حجرة') ||
+            (userChoice === 'مقص' && botChoice === 'ورقة')
+        ) result = 'فزت!';
+        else result = 'خسرت!';
+
+        message.reply(`أنت اخترت: ${userChoice}\nأنا اخترت: ${botChoice}\nالنتيجة: ${result}`);
+    }
+});
+
+client.commands.set('quiz', { // أمر اختبار
+    name: 'quiz',
+    description: 'اختبار بسيط مع أسئلة متنوعة',
+    execute(message) {
+        const questions = [ // قائمة طويلة من الأسئلة
+            { question: 'ما هي عاصمة فرنسا؟', answer: 'باريس' },
+            { question: 'كم عدد الكواكب في النظام الشمسي؟', answer: '8' },
+            { question: 'ما هو أكبر محيط في العالم؟', answer: 'المحيط الهادئ' },
+            { question: 'من كتب روميو وجولييت؟', answer: 'شكسبير' },
+            { question: 'ما هو العنصر الكيميائي للماء؟', answer: 'H2O' },
+            { question: 'كم عدد أيام السنة؟', answer: '365' },
+            { question: 'ما هو لون السماء في يوم مشمس؟', answer: 'أزرق' },
+            { question: 'من هو أول رئيس للولايات المتحدة؟', answer: 'جورج واشنطن' },
+            { question: 'كم عدد القارات في العالم؟', answer: '7' },
+            { question: 'ما هي أطول سلسلة جبال في العالم؟', answer: 'جبال الأنديز' }
+        ];
+        const q = questions[Math.floor(Math.random() * questions.length)];
+        message.channel.send(`📝 ${q.question}\nلديك 15 ثانية للإجابة!`);
+
+        const filter = response => response.author.id === message.author.id;
+        message.channel.awaitMessages({ filter, max: 1, time: 15000, errors: ['time'] })
+            .then(collected => {
+                if (collected.first().content.toLowerCase() === q.answer.toLowerCase()) {
+                    message.reply('✅ إجابة صحيحة!');
+                } else {
+                    message.reply(`❌ إجابة خاطئة! الإجابة الصحيحة هي: ${q.answer}`);
+                }
+            })
+            .catch(() => message.reply('⏰ انتهى الوقت!'));
+    }
+});
+
+// نظام المساعدة
+client.commands.set('help', { // أمر عرض قائمة الأوامر
+    name: 'help',
+    description: 'عرض قائمة الأوامر المتاحة',
+    execute(message) {
+        const helpEmbed = new Discord.EmbedBuilder()
+            .setColor('#0099ff')
+            .setTitle('📚 قائمة الأوامر')
+            .setDescription('جميع الأوامر المتاحة للبوت:')
+            .addFields(
+                { name: '!help', value: 'عرض هذه القائمة', inline: true },
+                { name: '!ban @user [reason]', value: 'حظر عضو', inline: true },
+                { name: '!kick @user [reason]', value: 'طرد عضو', inline: true },
+                { name: '!mute @user [time]', value: 'كتم عضو', inline: true },
+                { name: '!clear [amount]', value: 'حذف رسائل', inline: true },
+                { name: '!ticket', value: 'فتح تذكرة دعم', inline: true },
+                { name: '!close', value: 'إغلاق التذكرة', inline: true },
+                { name: '!balance', value: 'عرض رصيدك', inline: true },
+                { name: '!work', value: 'العمل لكسب العملات', inline: true },
+                { name: '!shop', value: 'عرض المتجر', inline: true },
+                { name: '!buy [item]', value: 'شراء عنصر', inline: true },
+                { name: '!rep @user', value: 'إعطاء سمعة', inline: true },
+                { name: '!reputation [@user]', value: 'عرض السمعة', inline: true },
+                { name: '!stats', value: 'عرض إحصائياتك', inline: true },
+                { name: '!addresponse [trigger] [response]', value: 'إضافة رد تلقائي', inline: true },
+                { name: '!removeresponse [trigger]', value: 'حذف رد تلقائي', inline: true },
+                { name: '!createchannel [name]', value: 'إنشاء قناة', inline: true },
+                { name: '!addrole @user [role]', value: 'إضافة رتبة', inline: true },
+                { name: '!removerole @user [role]', value: 'إزالة رتبة', inline: true },
+                { name: '!meme', value: 'عرض ميم عشوائي', inline: true },
+                { name: '!rps [choice]', value: 'لعبة حجرة ورقة مقص', inline: true },
+                { name: '!quiz', value: 'اختبار بسيط', inline: true }
+            )
+            .setFooter({ text: `البادئة: ${prefix} | تم التحديث في ${new Date().toLocaleDateString()}` })
+            .setTimestamp();
+        message.channel.send({ embeds: [helpEmbed] });
+    }
+});
+
+// معالجة الأخطاء
+client.on('error', error => console.error('خطأ في البوت:', error)); // تسجيل الأخطاء العامة
+client.on('warn', warning => console.warn('تحذير:', warning)); // تسجيل التحذيرات
+client.on('shardError', error => console.error('خطأ في الشارد:', error)); // تسجيل أخطاء الشارد
+
+// تسجيل الدخول
+client.login(config.token) // تسجيل الدخول باستخدام التوكن
+    .then(() => console.log('تم تسجيل الدخول بنجاح')) // تأكيد النجاح
+    .catch(err => console.error('فشل في تسجيل الدخول:', err)); // تسجيل الفشل
